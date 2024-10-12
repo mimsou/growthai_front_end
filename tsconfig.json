@@ -1,0 +1,32 @@
+{
+    "compilerOptions": {
+      "target": "ES5",                           // Output to ES5 for broader browser compatibility
+      "lib": ["DOM", "DOM.Iterable", "ESNext"],  // Include necessary libraries for React and modern JavaScript
+      "allowJs": true,                           // Allow JavaScript files to be compiled
+      "skipLibCheck": true,                      // Skip type checking of all declaration files (.d.ts)
+      "esModuleInterop": true,                   // Enables emit interoperability between CommonJS and ES Modules
+      "allowSyntheticDefaultImports": true,      // Allow default imports from modules with no default export
+      "strict": true,                            // Enable all strict type-checking options
+      "forceConsistentCasingInFileNames": true,  // Disallow inconsistently-cased references to the same file
+      "module": "ESNext",                        // Use ESNext module system for dynamic imports
+      "moduleResolution": "Node",                // Use Node.js module resolution strategy
+      "resolveJsonModule": true,                 // Include modules that are JSON files
+      "isolatedModules": true,                   // Ensures files are transpiled in isolation (important for React)
+      "jsx": "react-jsx",                        // Support React JSX syntax
+      "noEmit": true,                            // Do not emit compiled files
+      "noImplicitAny": true,                     // Raise error on expressions and declarations with an implied `any` type
+      "strictNullChecks": true,                  // Enable strict null checks
+      "noUnusedLocals": true,                    // Report errors on unused locals
+      "noUnusedParameters": true,                // Report errors on unused parameters
+      "noImplicitReturns": true,                 // Report errors for functions with code paths that do not return
+      "noFallthroughCasesInSwitch": true,        // Report errors for fallthrough cases in switch statements
+      "baseUrl": "./src",                        // Set base URL for resolving non-relative module names
+      "paths": {
+        "@components/*": ["components/*"],       // Example path alias, adjust as needed
+        "@store/*": ["store/*"]
+      }
+    },
+    "include": ["src"],                          // Include all TypeScript and JavaScript files in the src folder
+    "exclude": ["node_modules", "build"]         // Exclude node_modules and build directories from compilation
+  }
+  

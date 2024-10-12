@@ -1,23 +1,19 @@
-/** @type {import('tailwindcss').Config} */
+const { theme } = require('./src/styles/theme'); 
+
 module.exports = {
   content: [
     "./src/**/*.{js,jsx,ts,tsx}",
   ],
   theme: {
     extend: {
-      colors: {
-        'light-gray': '#f7f7f7',
-        'lighter-gray': '#f0f0f0',
+      colors: theme.colors,
+      fontFamily: {
+        sans: theme.fonts.sans,
       },
-      animation: {
-        'fade-in': 'fadeIn 0.5s ease-in-out',
-      },
-      keyframes: {
-        fadeIn: {
-          '0%': { opacity: 0 },
-          '100%': { opacity: 1 },
-        },
-      },
+      fontSize: theme.fontSizes,
+      spacing: theme.spacing,
+      borderRadius: theme.borderRadius,
+      boxShadow: theme.shadows,
     },
   },
   plugins: [],

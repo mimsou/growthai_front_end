@@ -1,0 +1,1713 @@
+src\app.controller.spec.ts 
+-----------START OF FILE----------- 
+import { Test, TestingModule } from '@nestjs/testing';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
+
+describe('AppController', () => {
+  let appController: AppController;
+
+  beforeEach(async () => {
+    const app: TestingModule = await Test.createTestingModule({
+      controllers: [AppController],
+      providers: [AppService],
+    }).compile();
+
+    appController = app.get<AppController>(AppController);
+  });
+
+  describe('root', () => {
+    it('should return "Hello World!"', () => {
+      expect(appController.getHello()).toBe('Hello World!');
+    });
+  });
+});
+-----------END OF FILE----------- 
+ 
+src\app.controller.ts 
+-----------START OF FILE----------- 
+import { Controller, Get } from '@nestjs/common';
+import { AppService } from './app.service';
+
+@Controller()
+export class AppController {
+  constructor(private readonly appService: AppService) {}
+
+  @Get()
+  getHello(): string {
+    return this.appService.getHello();
+  }
+}
+-----------END OF FILE----------- 
+ 
+src\app.module.ts 
+-----------START OF FILE----------- 
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
+import { AuthModule } from './auth/auth.module';
+import { SEOModule } from './seo/seo.module';
+import { ConfigModule } from '@nestjs/config';
+import { mongooseConfig } from './config/mongoose.config';
+import { AuditSessionModule } from './audit/audit-session.module';
+import { AIModule } from './ai/ai.module';
+import { CrawlerModule } from './crawler/crawler.module';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot({
+      isGlobal: true,
+    }),
+    MongooseModule.forRoot("mongodb://localhost:27017/seopt"),
+    AuthModule,
+    SEOModule,
+    AuditSessionModule,
+    AIModule,
+    CrawlerModule
+  ],
+  controllers: [],
+  providers: [],
+})
+export class AppModule {}-----------END OF FILE----------- 
+ 
+src\app.service.ts 
+-----------START OF FILE----------- 
+import { Injectable } from '@nestjs/common';
+
+@Injectable()
+export class AppService {
+  getHello(): string {
+    return 'Hello World!';
+  }
+}
+-----------END OF FILE----------- 
+ 
+src\main.ts 
+-----------START OF FILE----------- 
+import { NestFactory } from '@nestjs/core';
+import { AppModule } from './app.module';
+import { ValidationPipe } from '@nestjs/common';
+import { IoAdapter } from '@nestjs/platform-socket.io';
+
+async function bootstrap() {
+  const app = await NestFactory.create(AppModule);
+
+  // Enable CORS
+  app.enableCors({
+    origin: 'http://localhost:3000',
+    methods: 'GET,HEAD,PUT,PATCH,POST,DELETE,OPTIONS',
+    credentials: true,
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  });
+
+  // Configure WebSocket adapter with CORS
+  app.useWebSocketAdapter(new IoAdapter(app));
+
+  app.setGlobalPrefix('api');
+  app.useGlobalPipes(new ValidationPipe());
+  
+  await app.listen(process.env.PORT || 5000);
+}
+bootstrap();-----------END OF FILE----------- 
+ 
+    C:\Workspace\Web\Ai Business grow project\Back_end\src\ai\ai.controller.ts 
+-----------START OF FILE----------- 
+import { Controller, Post, Body, Res } from '@nestjs/common';
+import { AIService } from './ai.service';
+import { OllamaService } from './agent/ollama.agent.service';
+import { AiPromptService } from './prompt/ai.prompt.service';
+import { Response } from 'express'; // Import Express Response
+
+@Controller('ai')
+export class AiController {
+  constructor(private readonly aiService: AIService, private readonly ollamaService: OllamaService, private readonly aiPromptService: AiPromptService) {}
+
+  @Post('ask')
+  async Ask(@Body() data: { prompt: string; seoSubject: string, sessionId: string }, @Res() res: Response): Promise<any> {
+    const content = await this.aiService.getData(data.seoSubject, data.sessionId);
+    const prompt = await this.aiPromptService.getPromptBySeoSubject(data.seoSubject);
+
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Transfer-Encoding', 'chunked'); // Important for streaming response
+
+    // Call the service to stream the AI response
+    await this.ollamaService.streamResponse(prompt, content, res);
+  }
+}
+-----------END OF FILE----------- 
+ 
+    C:\Workspace\Web\Ai Business grow project\Back_end\src\ai\ai.module.ts 
+-----------START OF FILE----------- 
+import { Module , forwardRef } from '@nestjs/common';
+import { AIService } from './ai.service';
+import { SeoStrategy } from './ai.seo.strategy'; 
+import { RobotsService } from '../seo/robots/robots.service';
+import { SEOModule } from 'src/seo/seo.module';
+import { SEOEnum } from 'src/enum/seo.enum';
+import { MongooseModule } from '@nestjs/mongoose';
+import { SeoServiceInterface } from 'src/seo/seo.interface';
+import { RobotsData, RobotsDataSchema } from '../seo/robots/robots-data.schema';
+import { PromptData, PromptDataSchema } from  '../ai/prompt/ai.prompt-data.schema';
+import { AiController } from './ai.controller';
+import { AgentModule } from './agent/agent.modules';
+import { AiPromptService } from './prompt/ai.prompt.service';
+
+
+@Module({
+  imports: [
+    MongooseModule.forFeature([
+      { name: RobotsData.name, schema: RobotsDataSchema },
+      { name: PromptData.name, schema: PromptDataSchema },
+    ]),
+    AgentModule
+  ],
+  providers: [AIService,SeoStrategy,
+      {
+      provide: 'seoServices',
+      useFactory: (robotsService: RobotsService) => {
+        const seoServices = new Map<string, SeoServiceInterface>();
+        seoServices.set(SEOEnum.ROBOT, robotsService);
+        return seoServices;
+      },
+      inject: [RobotsService],
+    },
+    RobotsService,
+    AiPromptService],
+    controllers: [AiController],
+  exports: [AIService],
+})
+export class AIModule {
+}
+-----------END OF FILE----------- 
+ 
+    C:\Workspace\Web\Ai Business grow project\Back_end\src\ai\ai.seo.strategy.ts 
+-----------START OF FILE----------- 
+import { Inject, Injectable } from '@nestjs/common';
+import { SeoServiceInterface } from '../seo/seo.interface';
+
+@Injectable()
+export class SeoStrategy {
+  constructor( @Inject('seoServices') private readonly seoServices: Map<string, SeoServiceInterface>) {}
+
+  async execute(seoSubject: string, sessionId:string): Promise<any> {
+    const seoService = this.seoServices.get(seoSubject);
+    if (!seoService) {
+      throw new Error(`No SEO service found for subject: ${seoSubject}`);
+    }
+    return await seoService.getData(sessionId);
+  }
+
+  addSeoService(seoSubject: string, seoService: SeoServiceInterface): void {
+    this.seoServices.set(seoSubject, seoService);
+  }
+}-----------END OF FILE----------- 
+ 
+    C:\Workspace\Web\Ai Business grow project\Back_end\src\ai\ai.service.ts 
+-----------START OF FILE----------- 
+import { Injectable } from '@nestjs/common';
+import { SeoStrategy } from './ai.seo.strategy';
+
+@Injectable()
+export class AIService {
+  constructor(private readonly seoStrategy: SeoStrategy) {}
+  async getData(seoSubject:string, sessionId:string): Promise<any> {
+     return this.seoStrategy.execute(seoSubject, sessionId);
+  }
+}-----------END OF FILE----------- 
+ 
+        C:\Workspace\Web\Ai Business grow project\Back_end\src\ai\agent\agent.modules.ts 
+-----------START OF FILE----------- 
+import { Module } from '@nestjs/common';
+ import { OllamaService } from './ollama.agent.service';
+import { HttpModule } from '@nestjs/axios';
+ 
+ const agentProviders = [
+        OllamaService,
+ ];
+
+ @Module({
+   imports: [HttpModule],
+   providers: [...agentProviders],
+   exports: [...agentProviders],
+ })
+ export class AgentModule {}
+-----------END OF FILE----------- 
+ 
+        C:\Workspace\Web\Ai Business grow project\Back_end\src\ai\agent\ollama.agent.service.ts 
+-----------START OF FILE----------- 
+import { Injectable, HttpException, HttpStatus } from '@nestjs/common';
+import { HttpService } from '@nestjs/axios';
+import { ConfigService } from '@nestjs/config';
+import { Response } from 'express';
+
+@Injectable()
+export class OllamaService {
+  private readonly baseUrl: string;
+  private readonly httpService: HttpService;
+
+  constructor(private readonly configService: ConfigService, httpService: HttpService) {
+    this.baseUrl = this.configService.get<string>('LOCAL_IA_AGENT_SERVICE'); // Base URL from environment variable
+    this.httpService = httpService;
+  }
+
+  async streamResponse(prompt: string, context: string, res: Response): Promise<void> {
+    const endpoint = `${this.baseUrl}/api/generate`;
+
+    try {
+      const response = await this.httpService.post(endpoint, {
+        model: 'llama3.1:8b',
+        prompt: `${prompt} ${context}`,
+      }, { responseType: 'stream' }).toPromise();
+
+      if (!response || !response.data) {
+        throw new HttpException(`Error contacting the AI model`, HttpStatus.INTERNAL_SERVER_ERROR);
+      }
+
+      response.data.on('data', (chunk) => {
+        res.write(chunk);
+      });
+
+      response.data.on('end', () => {
+        res.end();
+      });
+    } catch (error) {
+      console.error(error);
+      throw new HttpException(`Error contacting the AI model: ${error.message}`, HttpStatus.INTERNAL_SERVER_ERROR);
+    }
+  }
+}
+-----------END OF FILE----------- 
+ 
+            C:\Workspace\Web\Ai Business grow project\Back_end\src\ai\prompt\ai.prompt-data.schema.ts 
+-----------START OF FILE----------- 
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Document } from 'mongoose';
+
+@Schema()
+export class PromptData extends Document {
+  @Prop({ required: true })
+  seoSubject: string;
+
+  @Prop()
+  content?: string;
+}
+
+export const PromptDataSchema = SchemaFactory.createForClass(PromptData);-----------END OF FILE----------- 
+ 
+            C:\Workspace\Web\Ai Business grow project\Back_end\src\ai\prompt\ai.prompt.service.ts 
+-----------START OF FILE----------- 
+
+import { Injectable } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import {PromptData } from './ai.prompt-data.schema';
+
+@Injectable()
+export class AiPromptService {
+  constructor(
+    @InjectModel(PromptData.name) private promptDataModel: Model<PromptData>,
+  ) {}
+
+  async getPromptBySeoSubject(seoSubject: string): Promise<string | null> {
+    const result = await this.promptDataModel.find({ seoSubject: seoSubject }).exec();
+    if (!result) return null;
+    return result.map(item => item.content).join('\n');
+  }
+}
+
+-----------END OF FILE----------- 
+ 
+                C:\Workspace\Web\Ai Business grow project\Back_end\src\audit\audit-session.controller.ts 
+-----------START OF FILE----------- 
+import { Controller, Post, UseGuards, Request } from '@nestjs/common';
+import { AuditSessionService } from './audit-session.service';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+
+@Controller('audit')
+export class AuditSessionController {
+  constructor(private readonly auditSessionService: AuditSessionService) {}
+
+  //@UseGuards(JwtAuthGuard)
+  @Post('new')
+  async createAuditSession(@Request() req: any) {
+    //console.log(req.user.id);
+    const userId = "66eefa9b8319d7e5b17f4d70"
+    const session = await this.auditSessionService.createAuditSession(userId);
+    return { auditId: session.auditId };
+  }
+}
+-----------END OF FILE----------- 
+ 
+                C:\Workspace\Web\Ai Business grow project\Back_end\src\audit\audit-session.module.ts 
+-----------START OF FILE----------- 
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
+import { AuditSessionController } from './audit-session.controller';
+import { AuditSessionService } from './audit-session.service';
+import { AuditSession, AuditSessionSchema } from './audit-session.schema';
+
+@Module({
+  imports: [MongooseModule.forFeature([{ name: AuditSession.name, schema: AuditSessionSchema }])],
+  controllers: [AuditSessionController],
+  providers: [AuditSessionService],
+})
+export class AuditSessionModule {}
+-----------END OF FILE----------- 
+ 
+                C:\Workspace\Web\Ai Business grow project\Back_end\src\audit\audit-session.schema.ts 
+-----------START OF FILE----------- 
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Document } from 'mongoose';
+import { v4 as uuidv4 } from 'uuid'; 
+
+@Schema()
+export class AuditSession extends Document {
+  @Prop({ required: true, default: uuidv4 })
+  auditId: string;
+
+  @Prop({ required: true })
+  userId: string;
+
+  @Prop({ required: true, default: Date.now })
+  startDateTime: Date;
+}
+
+export const AuditSessionSchema = SchemaFactory.createForClass(AuditSession);
+-----------END OF FILE----------- 
+ 
+                C:\Workspace\Web\Ai Business grow project\Back_end\src\audit\audit-session.service.ts 
+-----------START OF FILE----------- 
+import { Injectable } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { AuditSession } from './audit-session.schema';
+
+@Injectable()
+export class AuditSessionService {
+  constructor(
+    @InjectModel(AuditSession.name) private readonly auditSessionModel: Model<AuditSession>,
+  ) {}
+
+  async createAuditSession(userId: string): Promise<AuditSession> {
+    const newAuditSession = new this.auditSessionModel({ userId });
+    return newAuditSession.save();
+  }
+}
+-----------END OF FILE----------- 
+ 
+                    C:\Workspace\Web\Ai Business grow project\Back_end\src\auth\auth.controller.ts 
+-----------START OF FILE----------- 
+import { Body, Controller, Get, Post, UseGuards, UnauthorizedException, Req } from '@nestjs/common';
+import { AuthService } from './auth.service';
+import { RegisterUserDto } from './dto/register-user.dto';
+import { LoginUserDto } from './dto/login-user.dto';
+import { AuthGuard } from '@nestjs/passport';
+import { GoogleTokenDto } from './dto/google-token.dto';
+
+@Controller('auth')
+export class AuthController {
+  constructor(private readonly authService: AuthService) {}
+
+  @Post('register')
+  async register(@Body() registerDto: RegisterUserDto) {
+    return this.authService.register(registerDto);
+  }
+
+  @Post('login')
+  async login(@Body() loginDto: LoginUserDto) {
+    const user = await this.authService.validateUser(loginDto.email, loginDto.password);
+    if (!user) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
+    return this.authService.login(user);
+  }
+
+  @Post('google')
+  async googleLogin(@Body() googleTokenDto: GoogleTokenDto) {
+    return this.authService.verifyGoogleTokenAndLogin(googleTokenDto.token);
+  }
+
+  @UseGuards(AuthGuard('jwt'))
+  @Post('protected')
+  getProtected() {
+    return "This is a protected route";
+  }
+}
+-----------END OF FILE----------- 
+ 
+                    C:\Workspace\Web\Ai Business grow project\Back_end\src\auth\auth.module.ts 
+-----------START OF FILE----------- 
+import { Module } from '@nestjs/common';
+import { JwtModule } from '@nestjs/jwt';
+import { PassportModule } from '@nestjs/passport';
+import { AuthService } from './auth.service';
+import { AuthController } from './auth.controller';
+import { JwtStrategy } from './jwt.strategy';
+import { MongooseModule } from '@nestjs/mongoose';
+import { User, UserSchema } from '../users/user.schema';
+import { UserService } from 'src/users/user.service';
+
+@Module({
+  imports: [
+    MongooseModule.forFeature([{ name: User.name, schema: UserSchema }]),
+    PassportModule,
+    JwtModule.register({
+      secret: process.env.JWT_SECRET || 'defaultSecret',
+      signOptions: { expiresIn: '60m' },
+    }),
+  ],
+  providers: [AuthService, UserService, JwtStrategy],
+  controllers: [AuthController],
+})
+export class AuthModule {}
+-----------END OF FILE----------- 
+ 
+                    C:\Workspace\Web\Ai Business grow project\Back_end\src\auth\auth.service.ts 
+-----------START OF FILE----------- 
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { JwtService } from '@nestjs/jwt';
+import { UserService } from '../users/user.service';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { User } from '../users/user.schema';
+import { JwtPayload } from './interfaces/jwt-payload.interface';
+import { RegisterUserDto } from './dto/register-user.dto';
+import * as bcrypt from 'bcrypt';
+import { OAuth2Client } from 'google-auth-library';
+
+@Injectable()
+export class AuthService {
+
+  private googleClient: OAuth2Client;
+  constructor(
+    @InjectModel(User.name) private userModel: Model<User>,
+    private readonly userService: UserService,
+    private readonly jwtService: JwtService,
+  ) {
+    console.log(process.env.GOOGLE_CLIENT_ID)
+    this.googleClient = new OAuth2Client("244958252159-hl1ir8a7isdhpletnuuvbdobtdcfjebk.apps.googleusercontent.com");
+  }
+
+  async register(registerDto: RegisterUserDto) {
+    const { username, password, email } = registerDto;
+    const newUser = new this.userModel({ username, email, password });
+    return newUser.save();
+  }
+
+  async validateUser(email: string, pass: string): Promise<any> {
+    const user = await this.userModel.findOne({ email }).exec();
+    if (user && await bcrypt.compare(pass, user.password)) {
+      const { password, ...result } = user;
+      return result;
+    }
+    return null;
+  }
+
+  async login(user: any) {
+    const payload = { email: user.email, sub: user._id };
+    return {
+      access_token: this.jwtService.sign(payload),
+    };
+  }
+
+  async verifyGoogleTokenAndLogin(token: string) {
+    const ticket = await this.googleClient.verifyIdToken({
+      idToken: token,
+      audience: "244958252159-hl1ir8a7isdhpletnuuvbdobtdcfjebk.apps.googleusercontent.com",
+    });
+    const payload = ticket.getPayload();
+
+    if (!payload) {
+      throw new UnauthorizedException('Google token is invalid');
+    }
+
+    let user = await this.userService.findOne(payload.email);
+    if (!user) {
+      user = await this.userService.create({
+        username: payload.name,
+        email: payload.email,
+        password: await bcrypt.hash(Math.random().toString(36).slice(-8), 10),
+      });
+    }
+
+    return this.generateJwtToken(user);
+  }
+  async generateJwtToken(user: User) {
+    const payload = { email: user.email, sub: user._id };
+    return {
+      access_token: this.jwtService.sign(payload),
+    };
+  }
+
+  async validateUserByJwt(payload: JwtPayload): Promise<User> {
+    return this.userModel.findOne({ _id: payload.sub }).exec();
+  }
+}
+-----------END OF FILE----------- 
+ 
+                    C:\Workspace\Web\Ai Business grow project\Back_end\src\auth\jwt.strategy.ts 
+-----------START OF FILE----------- 
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { PassportStrategy } from '@nestjs/passport';
+import { ExtractJwt, Strategy } from 'passport-jwt';
+import { AuthService } from './auth.service';
+import { JwtPayload } from './interfaces/jwt-payload.interface';
+
+@Injectable()
+export class JwtStrategy extends PassportStrategy(Strategy) {
+  constructor(private authService: AuthService) {
+    super({
+      jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
+      ignoreExpiration: false,
+      secretOrKey: process.env.JWT_SECRET || 'defaultSecret',
+    });
+  }
+
+  async validate(payload: JwtPayload) {
+    const user = await this.authService.validateUserByJwt(payload);
+    if (!user) {
+      throw new UnauthorizedException();
+    }
+    return user;
+  }
+}
+
+-----------END OF FILE----------- 
+ 
+                        C:\Workspace\Web\Ai Business grow project\Back_end\src\auth\dto\create-user.dto.ts 
+-----------START OF FILE----------- 
+import { IsEmail, IsNotEmpty, MinLength } from 'class-validator';
+
+export class CreateUserDto {
+  @IsNotEmpty()
+  name: string;
+
+  @IsEmail()
+  email: string;
+
+  @IsNotEmpty()
+  @MinLength(6)
+  password: string;
+}
+-----------END OF FILE----------- 
+ 
+                        C:\Workspace\Web\Ai Business grow project\Back_end\src\auth\dto\google-token.dto.ts 
+-----------START OF FILE----------- 
+import { IsNotEmpty } from 'class-validator';
+
+export class GoogleTokenDto {
+  @IsNotEmpty()
+  token: string;
+}-----------END OF FILE----------- 
+ 
+                        C:\Workspace\Web\Ai Business grow project\Back_end\src\auth\dto\login-user.dto.ts 
+-----------START OF FILE----------- 
+import { IsEmail, IsNotEmpty } from 'class-validator';
+
+export class LoginUserDto {
+  @IsEmail()
+  email: string;
+
+  @IsNotEmpty()
+  password: string;
+}
+
+-----------END OF FILE----------- 
+ 
+                        C:\Workspace\Web\Ai Business grow project\Back_end\src\auth\dto\register-user.dto.ts 
+-----------START OF FILE----------- 
+import { IsEmail, IsNotEmpty, MinLength } from 'class-validator';
+
+export class RegisterUserDto {
+  @IsNotEmpty()
+  username: string;
+
+  @IsEmail()
+  email: string;
+
+  @IsNotEmpty()
+  @MinLength(6)
+  password: string;
+}-----------END OF FILE----------- 
+ 
+                            C:\Workspace\Web\Ai Business grow project\Back_end\src\auth\interfaces\jwt-payload.interface.ts 
+-----------START OF FILE----------- 
+export interface JwtPayload {
+    email: string;
+    sub: string;
+  }
+  -----------END OF FILE----------- 
+ 
+                                    C:\Workspace\Web\Ai Business grow project\Back_end\src\common\guards\jwt-auth.guard.ts 
+-----------START OF FILE----------- 
+import { Injectable } from '@nestjs/common';
+import { AuthGuard } from '@nestjs/passport';
+
+@Injectable()
+export class JwtAuthGuard extends AuthGuard('jwt') {}
+-----------END OF FILE----------- 
+ 
+                                        C:\Workspace\Web\Ai Business grow project\Back_end\src\config\mongoose.config.ts 
+-----------START OF FILE----------- 
+import { MongooseModuleOptions } from '@nestjs/mongoose';
+import * as dotenv from 'dotenv';
+
+dotenv.config();
+
+export const mongooseConfig: MongooseModuleOptions = {
+  uri: process.env.MONGO_URI 
+};-----------END OF FILE----------- 
+ 
+                                            C:\Workspace\Web\Ai Business grow project\Back_end\src\crawler\crawler.controller.ts 
+-----------START OF FILE----------- 
+import { Controller, Post, Body } from '@nestjs/common';
+import { CrawlerService } from './crawler.service';
+
+@Controller('crawler')
+export class CrawlerController {
+  constructor(private readonly crawlerService: CrawlerService) {}
+
+  @Post('crawl')
+  async crawlWebsite(@Body('url') url: string) {
+    return this.crawlerService.crawlWebsite(url);
+  }
+}-----------END OF FILE----------- 
+ 
+                                            C:\Workspace\Web\Ai Business grow project\Back_end\src\crawler\crawler.gateway.ts 
+-----------START OF FILE----------- 
+import { WebSocketGateway, WebSocketServer } from '@nestjs/websockets';
+import { OnEvent } from '@nestjs/event-emitter';
+import { Server } from 'socket.io';
+
+@WebSocketGateway({
+  cors: {
+    origin: 'http://localhost:3000',
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+})
+export class CrawlerGateway {
+  @WebSocketServer()
+  server: Server;
+
+  @OnEvent('crawling.progress')
+  handleCrawlingProgress(payload: { crawlingId: string; percentage: number; currentUrl: string }) {
+    console.log('Received crawling progress event:', payload);
+    this.server.emit('crawlingProgress', payload);
+  }
+
+  @OnEvent('crawling.completed')
+  handleCrawlingCompleted(payload: { crawlingId: string; averageScores: Record<string, number> }) {
+    this.server.emit('crawlingCompleted', payload);
+  }
+}
+
+-----------END OF FILE----------- 
+ 
+                                            C:\Workspace\Web\Ai Business grow project\Back_end\src\crawler\crawler.module.ts 
+-----------START OF FILE----------- 
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
+import { CrawlerController } from './crawler.controller';
+import { CrawlerService } from './crawler.service';
+import { CrawlerGateway } from './crawler.gateway';
+import { CrawlingSession, CrawlingSessionSchema } from './schemas/crawling-session.schema';
+import { CrawlingData, CrawlingDataSchema } from './schemas/crawling-data.schema';
+import { SitemapModule } from '../seo/sitemap/sitemap.module';
+import { EventEmitterModule } from '@nestjs/event-emitter';
+
+@Module({
+  imports: [
+    MongooseModule.forFeature([
+      { name: CrawlingSession.name, schema: CrawlingSessionSchema },
+      { name: CrawlingData.name, schema: CrawlingDataSchema },
+    ]),
+    SitemapModule,
+    EventEmitterModule.forRoot(),
+  ],
+  controllers: [CrawlerController],
+  providers: [CrawlerService, CrawlerGateway],
+})
+export class CrawlerModule {}-----------END OF FILE----------- 
+ 
+                                            C:\Workspace\Web\Ai Business grow project\Back_end\src\crawler\crawler.service.ts 
+-----------START OF FILE----------- 
+import { Injectable } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { CrawlingSession } from './schemas/crawling-session.schema';
+import { CrawlingData } from './schemas/crawling-data.schema';
+import { SitemapService } from '../seo/sitemap/sitemap.service';
+import * as cheerio from 'cheerio';
+import axios from 'axios';
+import { EventEmitter2 } from '@nestjs/event-emitter';
+
+@Injectable()
+export class CrawlerService {
+  private queue: string[] = [];
+  private visited: Set<string> = new Set();
+
+  constructor(
+    @InjectModel(CrawlingSession.name) private crawlingSessionModel: Model<CrawlingSession>,
+    @InjectModel(CrawlingData.name) private crawlingDataModel: Model<CrawlingData>,
+    private readonly sitemapService: SitemapService,
+    private eventEmitter: EventEmitter2
+  ) {}
+
+  async crawlWebsite(url: string): Promise<any> {
+    const domain = new URL(url).hostname;
+    const crawlingSession = await this.initiateCrawlingSession(domain);
+    const sitemapData = await this.sitemapService.getSitemapXmlData(url);
+
+    let totalUrls = 0;
+    let processedUrls = 0;
+
+    if (sitemapData.exist && sitemapData.urls) {
+      totalUrls = sitemapData.urls.length;
+      for (const url of sitemapData.urls) {
+        await this.crawlPage(crawlingSession.crawlingId, url);
+        processedUrls++;
+        this.emitProgress(crawlingSession.crawlingId, processedUrls, totalUrls, url);
+      }
+    } else {
+      await this.crawlWithoutSitemap(crawlingSession.crawlingId, url, (processed, total, currentUrl) => {
+        this.emitProgress(crawlingSession.crawlingId, processed, total, currentUrl);
+      });
+    }
+
+    const averageScores = await this.calculateAverageScores(crawlingSession.crawlingId);
+    this.eventEmitter.emit('crawling.completed', { crawlingId: crawlingSession.crawlingId, averageScores });
+
+    return { crawlingId: crawlingSession.crawlingId, averageScores };
+  }
+
+  private emitProgress(crawlingId: string, processed: number, total: number, currentUrl: string) {
+    console.log(currentUrl);
+    const percentage = (processed / total) * 100;
+    this.eventEmitter.emit('crawling.progress', { crawlingId, percentage, currentUrl });
+  }
+
+  private async initiateCrawlingSession(domain: string): Promise<CrawlingSession> {
+    let session = await this.crawlingSessionModel.findOne({ websiteDomain: domain }).exec();
+    if (!session) {
+      session = new this.crawlingSessionModel({
+        crawlingId: this.generateCrawlingId(domain),
+        websiteDomain: domain,
+      });
+      await session.save();
+    }
+    return session;
+  }
+
+  private generateCrawlingId(domain: string): string {
+    return `crawl_${domain.replace(/[^a-zA-Z0-9]/g, '_')}`;
+  }
+
+  private async crawlWithoutSitemap(crawlingId: string, startUrl: string, progressCallback: (processed: number, total: number, currentUrl: string) => void): Promise<void> {
+    this.queue = [startUrl];
+    this.visited.clear();
+    let processedUrls = 0;
+
+    while (this.queue.length > 0) {
+      const url = this.queue.shift();
+      if (url && !this.visited.has(url)) {
+        this.visited.add(url);
+        await this.crawlPage(crawlingId, url);
+        processedUrls++;
+        progressCallback(processedUrls, this.visited.size + this.queue.length, url);
+        await this.extractLinks(url);
+      }
+    }
+  }
+
+  private async calculateAverageScores(crawlingId: string): Promise<Record<string, number>> {
+    const allScores = await this.crawlingDataModel.find({ crawlingId }).select('seoScores -_id');
+    const totalScores: Record<string, number> = {};
+    let count = 0;
+
+    allScores.forEach(({ seoScores }) => {
+      count++;
+      Object.entries(seoScores).forEach(([key, value]) => {
+        totalScores[key] = (totalScores[key] || 0) + value;
+      });
+    });
+
+    const averageScores: Record<string, number> = {};
+    Object.entries(totalScores).forEach(([key, value]) => {
+      averageScores[key] = value / count;
+    });
+
+    return averageScores;
+  }
+
+  private async crawlPage(crawlingId: string, url: string): Promise<void> {
+    try {
+      const startTime = Date.now();
+      const response = await axios.get(url);
+      const loadTime = Date.now() - startTime;
+      const $ = cheerio.load(response.data);
+  
+      const { bestContent, goodContent, contentScore } = this.extractMainContent($);
+  
+      const pageData = {
+        crawlingId,
+        pageTitle: $('title').text(),
+        pageUrlRelative: new URL(url).pathname,
+        pageMetaData: this.extractMetadata($),
+        imageData: this.extractImageData($),
+        mainContent: bestContent,
+        goodContent: goodContent,
+        contentScore: contentScore,
+        wordCount: this.countWords($('body').text()),
+        loadTime,
+        urlStructure: this.analyzeUrlStructure(url),
+        brandingElements: this.detectBrandingElements($),
+        structuredData: this.extractStructuredData($),
+        seoScores: this.calculateSEOScores($, {
+          loadTime,
+          mainContent: bestContent,
+          urlStructure: this.analyzeUrlStructure(url),
+          sitemapPresent: true, // You should set this based on your sitemap check
+          robotsTxtPresent: true, // You should set this based on your robots.txt check
+        }),
+      };
+  
+      await this.updateCrawlingData(pageData);
+    } catch (error) {
+      console.error(`Error crawling ${url}: ${error.message}`);
+    }
+  }
+  
+
+  private extractMetadata($: cheerio.CheerioAPI): Record<string, string> {
+    const metadata: Record<string, string> = {};
+    $('meta').each((_, el) => {
+      const name = $(el).attr('name') || $(el).attr('property');
+      const content = $(el).attr('content');
+      if (name && content) {
+        metadata[name] = content;
+      }
+    });
+    metadata['canonical'] = $('link[rel="canonical"]').attr('href') || '';
+    $('link[rel="alternate"][hreflang]').each((_, el) => {
+      const hreflang = $(el).attr('hreflang');
+      const href = $(el).attr('href');
+      if (hreflang && href) {
+        metadata[`hreflang:${hreflang}`] = href;
+      }
+    });
+    return metadata;
+  }
+
+  private extractImageData($: cheerio.CheerioAPI): any[] {
+    return $('img').map((_, el) => ({
+      src: $(el).attr('src'),
+      alt: $(el).attr('alt'),
+      title: $(el).attr('title'),
+      width: $(el).attr('width'),
+      height: $(el).attr('height'),
+    })).get();
+  }
+
+  private extractMainContent($: cheerio.CheerioAPI): { bestContent: string, goodContent: string[], contentScore: number } {
+    const contentSelectors = [
+      'article', 'main', '#content', '.content', '.post-content',
+      '[role="main"]', '.entry-content', '.post', '.article'
+    ];
+  
+    let bestContent = '';
+    let bestScore = 0;
+    let goodContent: string[] = [];
+  
+    // Try common content selectors first
+    for (const selector of contentSelectors) {
+      const $content = $(selector);
+      if ($content.length) {
+        const content = $content.first().html();
+        const score = this.calculateContentScore(content);
+        if (score > bestScore) {
+          if (bestContent) {
+            goodContent.push(bestContent);
+          }
+          bestContent = content;
+          bestScore = score;
+        } else if (score > bestScore * 0.7) {
+          goodContent.push(content);
+        }
+      }
+    }
+  
+    // If no suitable content found, analyze all top-level elements
+    if (!bestContent) {
+      $('body > *').each((_, element) => {
+        const $element = $(element);
+        const content = $element.html();
+        const score = this.calculateContentScore(content);
+        if (score > bestScore) {
+          if (bestContent) {
+            goodContent.push(bestContent);
+          }
+          bestContent = content;
+          bestScore = score;
+        } else if (score > bestScore * 0.7) {
+          goodContent.push(content);
+        }
+      });
+    }
+  
+    // If still no content, fallback to body
+    if (!bestContent) {
+      bestContent = $('body').html();
+      bestScore = this.calculateContentScore(bestContent);
+    }
+  
+    return { bestContent, goodContent, contentScore: bestScore };
+  }
+  
+  private calculateContentScore(content: string): number {
+    if (!content) return 0;
+  
+    const text = cheerio.load(content).text();
+    const wordCount = text.split(/\s+/).length;
+    const linkDensity = (content.match(/<a /g) || []).length / wordCount;
+    const headingDensity = (content.match(/<h[1-6]/g) || []).length / wordCount;
+    const paragraphDensity = (content.match(/<p/g) || []).length / wordCount;
+  
+    let score = wordCount;
+    score *= (1 - linkDensity);
+    score *= (1 + headingDensity);
+    score *= (1 + paragraphDensity);
+  
+    if (content.includes('<article')) score *= 1.5;
+    if (content.includes('<section')) score *= 1.2;
+    if (content.includes('<figure')) score *= 1.1;
+  
+    return score;
+  }
+  
+
+  private countWords(text: string): number {
+    return text.trim().split(/\s+/).length;
+  }
+
+  private analyzeUrlStructure(url: string): Record<string, string> {
+    const parsedUrl = new URL(url);
+    return {
+      protocol: parsedUrl.protocol,
+      hostname: parsedUrl.hostname,
+      pathname: parsedUrl.pathname,
+      search: parsedUrl.search,
+      hash: parsedUrl.hash,
+    };
+  }
+
+  private detectBrandingElements($: cheerio.CheerioAPI): Record<string, boolean> {
+    return {
+      hasReviews: $('*:contains("review"), *:contains("testimonial")').length > 0,
+      hasChatbot: $('*:contains("chat"), *[id*="chat"], *[class*="chat"]').length > 0,
+      hasAboutUs: $('a[href*="about"], *:contains("About Us")').length > 0,
+      hasMediaSection: $('*:contains("Media"), a[href*="media"], a[href*="press"]').length > 0,
+      hasProjectsSection: $('*:contains("Projects"), a[href*="project"], a[href*="portfolio"]').length > 0,
+    };
+  }
+
+  private extractStructuredData($: cheerio.CheerioAPI): string[] {
+    return $('script[type="application/ld+json"]')
+      .map((_, el) => $(el).html())
+      .get();
+  }
+
+  private async extractLinks(url: string): Promise<string[]> {
+    try {
+      const response = await axios.get(url);
+      const $ = cheerio.load(response.data);
+      const baseUrl = new URL(url);
+      const validExtensions = new Set(['', '.html', '.htm', '.php', '.asp', '.aspx']);
+
+      const newUrls = $('a').map((_, el) => {
+        const href = $(el).attr('href');
+        if (href) {
+          try {
+            const newUrl = new URL(href, baseUrl.origin);
+            const pathname = newUrl.pathname.toLowerCase();
+            const extension = pathname.substring(pathname.lastIndexOf('.'));
+
+            if (newUrl.hostname === baseUrl.hostname && 
+                (validExtensions.has(extension) || !pathname.includes('.')) &&
+                !this.visited.has(newUrl.href)) {
+              return newUrl.href;
+            }
+          } catch {
+            // Invalid URL, ignore
+          }
+        }
+        return null;
+      }).get().filter(Boolean);
+
+      // Add unique URLs to the queue
+      this.queue.push(...new Set(newUrls));
+
+      return newUrls;
+    } catch (error) {
+      console.error(`Error extracting links from ${url}: ${error.message}`);
+      return [];
+    }
+  }
+
+  private async updateCrawlingData(pageData: any): Promise<void> {
+    await this.crawlingDataModel.findOneAndUpdate(
+      { crawlingId: pageData.crawlingId, pageUrlRelative: pageData.pageUrlRelative },
+      pageData,
+      { upsert: true, new: true }
+    );
+  }
+
+
+  private calculateSEOScores($: cheerio.CheerioAPI, pageData: any): Record<string, number> {
+    const scores: Record<string, number> = {};
+  
+    // Performance Score
+    scores.performance = this.calculatePerformanceScore(pageData.loadTime);
+  
+    // Content Score
+    scores.content = this.calculateContentScore(pageData.mainContent);
+  
+    // SEO Best Practices Score
+    scores.seoBestPractices = this.calculateSEOBestPracticesScore($, pageData);
+  
+    // Technical SEO Score
+    scores.technicalSEO = this.calculateTechnicalSEOScore($, pageData);
+  
+    // User Experience Score
+    scores.userExperience = this.calculateUserExperienceScore($, pageData);
+  
+    // Mobile Friendliness Score
+    scores.mobileFriendliness = this.calculateMobileFriendlinessScore($);
+  
+    return scores;
+  }
+  
+  private calculatePerformanceScore(loadTime: number): number {
+    // Lower load time is better, max score at 1 second or less
+    return Math.min(100, Math.max(0, 100 - (loadTime - 1000) / 100));
+  }
+  
+  private calculateSEOBestPracticesScore($: cheerio.CheerioAPI, pageData: any): number {
+    let score = 100;
+  
+    // Check for title
+    if (!$('title').length) score -= 10;
+  
+    // Check for meta description
+    if (!$('meta[name="description"]').length) score -= 10;
+  
+    // Check for heading structure
+    if (!$('h1').length) score -= 10;
+    if ($('h2').length < 2) score -= 5;
+  
+    // Check for alt text on images
+    const imagesWithoutAlt = $('img:not([alt])').length;
+    score -= imagesWithoutAlt * 2;
+  
+    // Check for internal linking
+    const internalLinks = $('a[href^="/"], a[href^="' + pageData.urlStructure.hostname + '"]').length;
+    if (internalLinks < 5) score -= 10;
+  
+    return Math.max(0, score);
+  }
+  
+  private calculateTechnicalSEOScore($: cheerio.CheerioAPI, pageData: any): number {
+    let score = 100;
+  
+    // Check for canonical URL
+    if (!$('link[rel="canonical"]').length) score -= 10;
+  
+    // Check for XML sitemap
+    if (!pageData.sitemapPresent) score -= 10;
+  
+    // Check for robots.txt
+    if (!pageData.robotsTxtPresent) score -= 10;
+  
+    // Check for HTTPS
+    if (pageData.urlStructure.protocol !== 'https:') score -= 20;
+  
+    // Check for mobile viewport
+    if (!$('meta[name="viewport"]').length) score -= 10;
+  
+    return Math.max(0, score);
+  }
+  
+  private calculateUserExperienceScore($: cheerio.CheerioAPI, pageData: any): number {
+    let score = 100;
+  
+    // Check for readability (simplified)
+    const readabilityScore = this.calculateReadabilityScore(pageData.mainContent);
+    score -= Math.max(0, 20 - readabilityScore);
+  
+    // Check for presence of contact information
+    if (!$('*:contains("contact"), *:contains("email"), *:contains("phone")').length) score -= 10;
+  
+    // Check for social media links
+    if (!$('a[href*="facebook"], a[href*="twitter"], a[href*="linkedin"], a[href*="instagram"]').length) score -= 10;
+  
+    // Check for navigation menu
+    if (!$('nav, #nav, .nav, #menu, .menu').length) score -= 10;
+  
+    return Math.max(0, score);
+  }
+  
+  private calculateMobileFriendlinessScore($: cheerio.CheerioAPI): number {
+    let score = 100;
+  
+    // Check for responsive design (simplified)
+    if (!$('meta[name="viewport"]').length) score -= 50;
+  
+    // Check for touch-friendly button sizes (simplified)
+    const smallButtons = $('button, .button, [role="button"]').filter((_, el) => {
+      const width = $(el).css('width');
+      const height = $(el).css('height');
+      return (width && parseInt(width) < 44) || (height && parseInt(height) < 44);
+    }).length;
+    score -= smallButtons * 5;
+  
+    // Check for font size (simplified)
+    const smallFonts = $('*').filter((_, el) => {
+      const fontSize = $(el).css('font-size');
+      return fontSize && parseInt(fontSize) < 12;
+    }).length;
+    score -= smallFonts * 2;
+  
+    return Math.max(0, score);
+  }
+  
+  private calculateReadabilityScore(content: string): number {
+    const text = cheerio.load(content).text();
+    const words = text.split(/\s+/).length;
+    const sentences = text.split(/[.!?]+/).length;
+    const avgWordsPerSentence = words / sentences;
+  
+    // Simple readability score based on average words per sentence
+    return Math.max(0, 100 - Math.abs(avgWordsPerSentence - 15) * 5);
+  }
+  
+}
+-----------END OF FILE----------- 
+ 
+                                                C:\Workspace\Web\Ai Business grow project\Back_end\src\crawler\schemas\crawling-data.schema.ts 
+-----------START OF FILE----------- 
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Document } from 'mongoose';
+
+@Schema()
+export class CrawlingData extends Document {
+  @Prop({ required: true })
+  crawlingId: string;
+
+  @Prop()
+  pageTitle: string;
+
+  @Prop({ required: true })
+  pageUrlRelative: string;
+
+  @Prop({ type: Object })
+  pageMetaData: Record<string, string>;
+
+  @Prop({ type: Array })
+  imageData: any[];
+
+  @Prop()
+  mainContent: string;
+
+  @Prop()
+  wordCount: number;
+
+  @Prop()
+  loadTime: number;
+
+  @Prop({ type: Object })
+  urlStructure: Record<string, string>;
+
+  @Prop({ type: Object })
+  brandingElements: Record<string, boolean>;
+
+  @Prop({ type: [String] })
+  structuredData: string[];
+
+  @Prop({ type: Object })
+  seoScores: Record<string, number>;
+}
+
+export const CrawlingDataSchema = SchemaFactory.createForClass(CrawlingData);
+-----------END OF FILE----------- 
+ 
+                                                C:\Workspace\Web\Ai Business grow project\Back_end\src\crawler\schemas\crawling-session.schema.ts 
+-----------START OF FILE----------- 
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Document } from 'mongoose';
+
+@Schema()
+export class CrawlingSession extends Document {
+  @Prop({ required: true, unique: true })
+  crawlingId: string;
+
+  @Prop({ required: true })
+  websiteDomain: string;
+}
+
+export const CrawlingSessionSchema = SchemaFactory.createForClass(CrawlingSession);
+-----------END OF FILE----------- 
+ 
+                                                    C:\Workspace\Web\Ai Business grow project\Back_end\src\enum\seo.enum.ts 
+-----------START OF FILE----------- 
+export enum SEOEnum {
+    ROBOT = "ROBOT",
+}-----------END OF FILE----------- 
+ 
+                                                        C:\Workspace\Web\Ai Business grow project\Back_end\src\seo\external-api.service.ts 
+-----------START OF FILE----------- 
+import { Injectable } from '@nestjs/common';
+
+@Injectable()
+export class ExternalAPIService {
+  async fetchData(apiUrl: string, params: any): Promise<any> {
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    return "voila ";
+  }
+}
+-----------END OF FILE----------- 
+ 
+                                                        C:\Workspace\Web\Ai Business grow project\Back_end\src\seo\seo.interface.ts 
+-----------START OF FILE----------- 
+export interface SeoServiceInterface {
+  getData(sessionId:string): any;
+}-----------END OF FILE----------- 
+ 
+                                                        C:\Workspace\Web\Ai Business grow project\Back_end\src\seo\seo.module.ts 
+-----------START OF FILE----------- 
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
+import { RobotsModule } from './robots/robots.module';
+import { SitemapModule } from './sitemap/sitemap.module';
+import { RobotsData, RobotsDataSchema } from './robots/robots-data.schema';
+import { SitemapData, SitemapDataSchema } from './sitemap/sitemap-data.schema';
+
+@Module({
+  imports: [
+    RobotsModule,
+    SitemapModule,
+    MongooseModule.forFeature([
+      { name: RobotsData.name, schema: RobotsDataSchema },
+      { name: SitemapData.name, schema: SitemapDataSchema },
+    ]),
+  ],
+  exports: [RobotsModule, SitemapModule],
+})
+export class SEOModule {}-----------END OF FILE----------- 
+ 
+                                                        C:\Workspace\Web\Ai Business grow project\Back_end\src\seo\transform.service.ts 
+-----------START OF FILE----------- 
+import { Injectable } from '@nestjs/common';
+
+@Injectable()
+export class TransformService {
+  transformData(rawData: any, transformationType: string): any {
+    // Placeholder for data transformation logic
+    // Implement transformations based on the type of data
+    return rawData; // Simplified, should be adjusted for real transformation logic
+  }
+}
+-----------END OF FILE----------- 
+ 
+                                                            C:\Workspace\Web\Ai Business grow project\Back_end\src\seo\robots\RobotData.Interface.ts 
+-----------START OF FILE----------- 
+export interface RobotsData {
+    exist: boolean;
+    content?: string;
+  }-----------END OF FILE----------- 
+ 
+                                                            C:\Workspace\Web\Ai Business grow project\Back_end\src\seo\robots\robots-data.schema.ts 
+-----------START OF FILE----------- 
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Document } from 'mongoose';
+
+@Schema()
+export class RobotsData extends Document {
+  @Prop({ required: true })
+  auditId: string;
+
+  @Prop({ required: true })
+  exist: boolean;
+
+  @Prop()
+  content?: string;
+}
+
+export const RobotsDataSchema = SchemaFactory.createForClass(RobotsData);
+-----------END OF FILE----------- 
+ 
+                                                            C:\Workspace\Web\Ai Business grow project\Back_end\src\seo\robots\robots.config.ts 
+-----------START OF FILE----------- 
+export const robotsConfig = {
+    externalApiUrl: 'https://example-robots-api.com',
+  };
+  -----------END OF FILE----------- 
+ 
+                                                            C:\Workspace\Web\Ai Business grow project\Back_end\src\seo\robots\robots.controller.ts 
+-----------START OF FILE----------- 
+import { Controller, Get, Query } from '@nestjs/common';
+import { RobotsService } from './robots.service';
+
+@Controller('seo/robots')
+export class RobotsController {
+  constructor(private readonly robotsService: RobotsService) {}
+
+  @Get()
+  async getRobotsData(@Query('url') url: string, @Query('auditId') auditId: string) {
+    return this.robotsService.analyzeRobots(url, auditId);
+  }
+}
+-----------END OF FILE----------- 
+ 
+                                                            C:\Workspace\Web\Ai Business grow project\Back_end\src\seo\robots\robots.module.ts 
+-----------START OF FILE----------- 
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
+import { RobotsService } from './robots.service';
+import { RobotsController } from './robots.controller';
+import { RobotsData, RobotsDataSchema } from './robots-data.schema';
+
+@Module({
+  imports: [MongooseModule.forFeature([{ name: RobotsData.name, schema: RobotsDataSchema }])],
+  controllers: [RobotsController],
+  providers: [RobotsService],
+})
+export class RobotsModule {}
+-----------END OF FILE----------- 
+ 
+                                                            C:\Workspace\Web\Ai Business grow project\Back_end\src\seo\robots\robots.service.ts 
+-----------START OF FILE----------- 
+import { Injectable } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { RobotsData } from './robots-data.schema';
+import { SeoServiceInterface } from '../seo.interface';
+
+@Injectable()
+export class RobotsService implements SeoServiceInterface {
+  constructor(
+    @InjectModel(RobotsData.name) private robotsDataModel: Model<RobotsData>,
+  ) { }
+
+  async analyzeRobots(url: string, auditId: string): Promise<any> {
+    const rawData = await this.getRobotsData(url);
+    await this.saveRobotsData(auditId, rawData);
+    return rawData;
+  }
+
+  async getRobotsData(url: string): Promise<{ exist: boolean; content?: string }> {
+
+    const rootUrl = await this.getRootUrl(url);
+    const robotsTxtUrl = `${rootUrl}/robots.txt`;
+    try {
+      const response = await fetch(robotsTxtUrl);
+      const isText =  this.isTextFile(response);
+      console.log(!this.isTextFile(response));
+      if (response.ok && this.isTextFile(response) ) {
+        return {
+          exist: true,
+          content: await response.text(),
+        };
+      }
+    } catch (_) {
+      return {
+        exist: false,
+        content:''
+      };
+    }
+  }
+
+  private async getRootUrl(url: string): Promise<string> {
+    const parsedUrl = new URL(url);
+    return `${parsedUrl.protocol}//${parsedUrl.hostname}`;
+  }
+
+  private isTextFile(response: Response): boolean {
+    const contentType = response.headers.get('content-type');
+    return contentType && contentType.includes('text/plain');
+  }
+
+  private async saveRobotsData(auditId: string, rawData: { exist: boolean; content?: string }): Promise<void> {
+    const robotsData = new this.robotsDataModel({
+      auditId,
+      exist: rawData.exist,
+      content: rawData.content,
+    });
+    await robotsData.save();
+  }
+
+  public async getData(sessionId: string): Promise<any> {
+    try {
+      const robotsData = await this.robotsDataModel.findOne({ auditId: sessionId }).exec()
+      return robotsData.content
+    } catch (error) {
+      throw new Error(`Failed to fetch robots data: ${error.message}`)
+    }
+  }
+  
+}
+
+-----------END OF FILE----------- 
+ 
+                                                                C:\Workspace\Web\Ai Business grow project\Back_end\src\seo\sitemap\sitemap-data.schema.ts 
+-----------START OF FILE----------- 
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Document } from 'mongoose';
+
+@Schema()
+export class SitemapData extends Document {
+  @Prop({ required: true })
+  auditId: string;
+
+  @Prop({ required: true })
+  xmlExist: boolean;
+
+  @Prop()
+  xmlContent?: string;
+
+  @Prop()
+  xmlUrls?: string[];
+
+  @Prop({ required: true })
+  htmlExist: boolean;
+
+  @Prop()
+  htmlContent?: string;
+}
+
+export const SitemapDataSchema = SchemaFactory.createForClass(SitemapData);
+-----------END OF FILE----------- 
+ 
+                                                                C:\Workspace\Web\Ai Business grow project\Back_end\src\seo\sitemap\sitemap.controller.ts 
+-----------START OF FILE----------- 
+import { Controller, Get, Query } from '@nestjs/common';
+import { SitemapService } from './sitemap.service';
+
+@Controller('seo/sitemap')
+export class SitemapController {
+  constructor(private readonly sitemapService: SitemapService) {}
+
+  @Get()
+  async getSitemapData(@Query('url') url: string, @Query('auditId') auditId: string) {
+    return this.sitemapService.analyzeSitemap(url, auditId);
+  }
+}-----------END OF FILE----------- 
+ 
+                                                                C:\Workspace\Web\Ai Business grow project\Back_end\src\seo\sitemap\sitemap.module.ts 
+-----------START OF FILE----------- 
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
+import { SitemapService } from './sitemap.service';
+import { SitemapController } from './sitemap.controller';
+import { SitemapData, SitemapDataSchema } from './sitemap-data.schema';
+
+@Module({
+  imports: [MongooseModule.forFeature([{ name: SitemapData.name, schema: SitemapDataSchema }])],
+  controllers: [SitemapController],
+  providers: [SitemapService],
+  exports: [SitemapService],
+})
+export class SitemapModule {}
+-----------END OF FILE----------- 
+ 
+                                                                C:\Workspace\Web\Ai Business grow project\Back_end\src\seo\sitemap\sitemap.service.ts 
+-----------START OF FILE----------- 
+import { Injectable } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { SitemapData } from './sitemap-data.schema';
+import { SeoServiceInterface } from '../seo.interface';
+import * as xml2js from 'xml2js';
+
+@Injectable()
+export class SitemapService implements SeoServiceInterface {
+  constructor(
+    @InjectModel(SitemapData.name) private sitemapDataModel: Model<SitemapData>,
+  ) {}
+
+  async analyzeSitemap(url: string, auditId: string): Promise<any> {
+    const xmlData = await this.getSitemapXmlData(url);
+    const htmlData = await this.getSitemapHtmlData(url);
+    await this.saveSitemapData(auditId, xmlData, htmlData);
+    return { xml: xmlData, html: htmlData };
+  }
+
+  async getSitemapXmlData(url: string): Promise<{ exist: boolean; content?: string; urls?: string[] }> {
+    const rootUrl = await this.getRootUrl(url);
+    const sitemapUrl = `${rootUrl}/sitemap.xml`;
+    try {
+      const response = await fetch(sitemapUrl);
+      if (response.ok && response.headers.get('content-type')?.includes('application/xml')) {
+        const content = await response.text();
+        const urls = await this.parseSitemapXml(content);
+        return {
+          exist: true,
+          content,
+          urls,
+        };
+      }
+    } catch (_) {}
+    return {
+      exist: false,
+    };
+  }
+
+  async getSitemapHtmlData(url: string): Promise<{ exist: boolean; content?: string }> {
+    const rootUrl = await this.getRootUrl(url);
+    const sitemapUrl = `${rootUrl}/sitemap.html`;
+    try {
+      const response = await fetch(sitemapUrl);
+      if (response.ok && response.headers.get('content-type')?.includes('text/html')) {
+        const content = await response.text();
+        return {
+          exist: true,
+          content,
+        };
+      }
+    } catch (_) {}
+    return {
+      exist: false,
+    };
+  }
+
+  private async getRootUrl(url: string): Promise<string> {
+    const parsedUrl = new URL(url);
+    return `${parsedUrl.protocol}//${parsedUrl.hostname}`;
+  }
+
+  private async parseSitemapXml(content: string): Promise<string[]> {
+    const parser = new xml2js.Parser();
+    const result = await parser.parseStringPromise(content);
+    return result.urlset.url.map(urlObj => urlObj.loc[0]);
+  }
+
+  private async saveSitemapData(
+    auditId: string, 
+    xmlData: { exist: boolean; content?: string; urls?: string[] },
+    htmlData: { exist: boolean; content?: string }
+  ): Promise<void> {
+    const sitemapData = new this.sitemapDataModel({
+      auditId,
+      xmlExist: xmlData.exist,
+      xmlContent: xmlData.content,
+      xmlUrls: xmlData.urls,
+      htmlExist: htmlData.exist,
+      htmlContent: htmlData.content,
+    });
+    await sitemapData.save();
+  }
+
+  public async getData(sessionId: string): Promise<any> {
+    try {
+      const sitemapData = await this.sitemapDataModel.findOne({ auditId: sessionId }).exec();
+      return {
+        xml: {
+          exist: sitemapData.xmlExist,
+          content: sitemapData.xmlContent,
+          urls: sitemapData.xmlUrls,
+        },
+        html: {
+          exist: sitemapData.htmlExist,
+          content: sitemapData.htmlContent,
+        },
+      };
+    } catch (error) {
+      throw new Error(`Failed to fetch sitemap data: ${error.message}`);
+    }
+  }
+}
+-----------END OF FILE----------- 
+ 
+                                                                C:\Workspace\Web\Ai Business grow project\Back_end\src\seo\sitemap\SitemapData.Interface.ts 
+-----------START OF FILE----------- 
+export interface SitemapData {
+  xmlExist: boolean;
+  xmlContent?: string;
+  xmlUrls?: string[];
+  htmlExist: boolean;
+  htmlContent?: string;
+}
+-----------END OF FILE----------- 
+ 
+                                                                    C:\Workspace\Web\Ai Business grow project\Back_end\src\users\user.module.ts 
+-----------START OF FILE----------- 
+import { Module } from '@nestjs/common';
+import { MongooseModule } from '@nestjs/mongoose';
+import { UserService } from './user.service';
+import { UserSchema } from './user.schema';
+
+@Module({
+  imports: [MongooseModule.forFeature([{ name: 'User', schema: UserSchema }])],
+  providers: [UserService],
+  exports: [UserService],
+})
+export class UserModule {}
+-----------END OF FILE----------- 
+ 
+                                                                    C:\Workspace\Web\Ai Business grow project\Back_end\src\users\user.schema.ts 
+-----------START OF FILE----------- 
+import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
+import { Document } from 'mongoose';
+import * as bcrypt from 'bcrypt';
+
+@Schema()
+export class User extends Document {
+  @Prop({ required: true })
+  username: string;
+
+  @Prop({ required: true, unique: true })
+  email: string;
+
+  @Prop({ required: true })
+  password: string;
+
+  async comparePassword(enteredPassword: string): Promise<boolean> {
+    return await bcrypt.compare(enteredPassword, this.password);
+  }
+}
+
+export const UserSchema = SchemaFactory.createForClass(User);
+
+UserSchema.pre<User>('save', async function (next) {
+  if (!this.isModified('password')) {
+    return next();
+  }
+  
+  const salt = await bcrypt.genSalt(10);
+  this.password = await bcrypt.hash(this.password, salt);
+  next();
+});
+-----------END OF FILE----------- 
+ 
+                                                                    C:\Workspace\Web\Ai Business grow project\Back_end\src\users\user.service.ts 
+-----------START OF FILE----------- 
+import { Injectable } from '@nestjs/common';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
+import { User } from './user.schema';
+
+@Injectable()
+export class UserService {
+  constructor(
+    @InjectModel(User.name) private userModel: Model<User>,
+  ) {}
+
+  async findOne(email: string): Promise<User | undefined> {
+    return this.userModel.findOne({ email }).exec();
+  }
+
+  async create(userData: any): Promise<User> {
+    const user = new this.userModel(userData);
+    return user.save();
+  }
+}
+-----------END OF FILE----------- 
+ 
