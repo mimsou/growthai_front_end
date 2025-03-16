@@ -1,3 +1,3 @@
-const BASE_API_URL: string = 'http://localhost:5000/api';
-export const BASE_URL: string = 'http://localhost:5000';
+const BASE_API_URL: string = 'https://growthai-app-bb9ji.ondigitalocean.app/api';
+export const BASE_URL: string = 'https://growthai-app-bb9ji.ondigitalocean.app';
 export default BASE_API_URL;
